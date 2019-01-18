@@ -1,0 +1,107 @@
+/* My Functions */
+
+  /* My Surface Reflectance Scaling Function */ 
+
+    var srScale = function(img)
+                  {
+                    img =  img.clip(aoi)
+                    img  = img.addBands(img.select(['blue', 'green', 'red', 'nir', 'swir1', 'swir2']).multiply(0.0001)).addBands(img.select(['tir']).multiply(0.1));
+                    return img.select(['blue_1', 'green_1', 'red_1', 'nir_1', 'swir1_1', 'swir2_1','tir_1'],['blue', 'green', 'red', 'nir', 'swir1', 'swir2','tir'])
+                  }
+
+  /* My Cloud Function */ 
+
+    var cloudMask = function(img)
+                  {
+                    img  = img.addBands(img.select('tir').unitScale(240,270)); 
+                    img  = img.addBands(img.normalizedDifference(['tir_1','swir2']))
+                    img  = img.addBands(img.select('nd').lte(ee.Number(cloudThresh).divide(100)).rename('cloud'));
+                    var mask = img.select('cloud').fastDistanceTransform(51, 'pixels', 'squared_euclidean').sqrt().multiply(ee.Image.pixelArea().sqrt()).gt(cloud_buff)
+                    return img.select(STD_NAMES).updateMask(mask)
+                  }
+
+/* My Variables */
+
+  /* My Parameters */
+  
+    var imageRes      = 30;
+    var clouds        = 50;
+    var doyStart      = ee.Date('2000-07-01').getRelative('day','year').getInfo() 
+    var doyEnd        = ee.Date('2000-10-01').getRelative('day','year').getInfo() 
+    var percentile    = 40;  
+    var searchPlus    = 4;
+    var minY          = 1984;
+    var maxY          = 2018;
+    var incY          = searchPlus;
+    var years         = ee.List.sequence(minY, maxY, incY)
+    var cloudThresh   = 40;
+    var cloudThresh2  = ee.Number(cloudThresh).divide(10)
+    var cloud_buff    = 4000;
+    var folder        = ee.Date(Date.now()).format("YYYY_MM_","America/Los_Angeles").getInfo() + 
+                        "Landsat_Mosaic_" + 
+                        "Habitat_Elk";
+    var aoiName       = "SouthEastBC"
+    var regions       = ee.FeatureCollection('ft:1O0TQ2B2kvm9x07SiXHbkFFxc2eIhx00589IrqSai','geometry')
+    var aoi           = ee.Feature(regions.union().first()).geometry(); 
+
+  /* My Bands Names */
+  
+    var L45_BANDS     = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7', 'B6'];
+    var L7_BANDS      = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7', 'B6'];
+    var L8_BANDS      = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10'];
+    var STD_NAMES     = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'tir'];
+
+    var imgPalette  = {min:1, max: 8, palette: 'white,blue,brown,green,yellow,black,lightgreen,red'}
+    var swirPalette = {min:0, max: 0.5}
+  /* My Image Collection */ 
+
+    var col = ee.ImageCollection(
+      L4SR1.select(L45_BANDS, STD_NAMES).merge(
+      L5SR1.select(L45_BANDS, STD_NAMES)).merge(
+      L7SR1.filterDate('1999-01-01','2003-01-01').select(L7_BANDS, STD_NAMES)).merge(
+      L7SR1.filterDate('2012-01-01','2012-12-31').select(L7_BANDS, STD_NAMES)).merge(
+      L8SR1.select(L8_BANDS, STD_NAMES)))
+        .filterBounds(aoi)
+        .filterMetadata('CLOUD_COVER','less_than', clouds)
+        .filter(ee.Filter.dayOfYear(doyStart,doyEnd))
+        .map(srScale)
+        .map(cloudMask)
+        .map(function(img){
+          var ndvi = img.normalizedDifference(["nir","red"]).toDouble().rename(['ndvi'])
+          var nbr  = img.normalizedDifference(["nir","swir2"]).toDouble().rename(['nbr'])
+          var ndmi = img.normalizedDifference(["nir","swir1"]).toDouble().rename(['ndmi'])
+          return img.addBands(ndvi).addBands(nbr).addBands(ndmi).addBands(srtm)})
+ 
+
+
+
+for (var i = minY; i <maxY; i+= incY){
+
+  var res = ee.Image(col.filterDate(i+"-01-01", i+searchPlus+"-12-31").mean())
+  var msk = srtm.lt(2100).updateMask(srtm.lt(2100))
+  var res = res.updateMask(msk)
+
+  Map.addLayer(res.select(['swir1','nir','red']), {min:0, max: 0.4}, i.toString() + " swir", true)
+  Map.addLayer(res.select(['nir','red','green']), {min:0, max: 0.4}, i.toString() + " nir", false)
+  Map.addLayer(res.select(['red','green','blue']), {min:0, max: 0.4}, i.toString() + " tc", false)
+
+  var file = aoiName + "_" + ee.Date(Date.now()).format("YYYYMMddhhmm","America/Los_Angeles").getInfo() + "_" +
+      "_r" + imageRes + "_c" + clouds + "_d" + doyStart + doyEnd + "_s" + searchPlus + "_" + minY + maxY + "_" + 
+      incY + "_" + "c" + cloudThresh + "_" + i;
+  print(file)
+  
+  Export.image.toDrive({
+    image: res, 
+    description: "2019_Elk_6bands_"+i, 
+    folder: folder, 
+    region: aoi, 
+    scale: imageRes, 
+    crs: "EPSG:3005", 
+    maxPixels: 1e13})
+
+  print(i+"-01-01", i+searchPlus+"-12-31", "done")
+
+
+  }
+
+print("all","done")
