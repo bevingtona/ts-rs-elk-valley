@@ -32,7 +32,7 @@
     var searchPlus    = 4;
     var minY          = 1984;
     var maxY          = 2018;
-    var incY          = searchPlus;
+    var incY          = searchPlus+1;
     var years         = ee.List.sequence(minY, maxY, incY)
     var cloudThresh   = 40;
     var cloudThresh2  = ee.Number(cloudThresh).divide(10)
